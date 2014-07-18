@@ -1,0 +1,507 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset='utf-8'>
+    <meta http-equiv="X-UA-Compatible" content="chrome=1">
+    <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">
+    <link href='https://fonts.googleapis.com/css?family=Architects+Daughter' rel='stylesheet' type='text/css'>
+    <link rel="stylesheet" type="text/css" href="stylesheets/stylesheet.css" media="screen" />
+    <link rel="stylesheet" type="text/css" href="stylesheets/pygment_trac.css" media="screen" />
+    <link rel="stylesheet" type="text/css" href="stylesheets/print.css" media="print" />
+
+    <!--[if lt IE 9]>
+    <script src="//html5shiv.googlecode.com/svn/trunk/html5.js"></script>
+    <![endif]-->
+
+    <title>Woocommerce Pesapal Standard Gateway by jonathan-kosgei</title>
+  </head>
+
+  <body>
+    <header>
+      <div class="inner">
+        <h1>Woocommerce Pesapal Standard Gateway</h1>
+        <h2>Extends WooCommerce with a Pesapal gateway.</h2>
+        <a href="https://github.com/jonathan-kosgei/woocommerce-pesapal-standard-gateway" class="button"><small>View project on</small>GitHub</a>
+      </div>
+    </header>
+
+    <div id="content-wrapper">
+      <div class="inner clearfix">
+        <section id="main-content">
+          <h1>
+<a name="woocommerce-pesapal-payment-gateway" class="anchor" href="#woocommerce-pesapal-payment-gateway"><span class="octicon octicon-link"></span></a>Woocommerce Pesapal Payment Gateway</h1>
+
+<p>Extends WooCommerce with a Pesapal gateway. Allowing payments via Visa/Mastercard, Bank Transfer, mobile money and the users Pesapl e-wallet.</p>
+
+<p>Below is an extensive study of the code powering this gateway :</p>
+
+<p>`
+First a familiar plugin header</p>
+
+<pre><code>    Plugin Name: WooCommerce Pesapal Standard Gateway
+    Plugin URI: http://stormtech.my.phpcloud.com
+    Description: Extends WooCommerce with a Pesapal gateway.
+    Version: 1.0
+    Author: Jonathan Kosgei
+    Author URI: http://stormtech.my.phpcloud.com
+    Copyright: © 2009-2011 Jonathan Kosgei.
+    License: GNU General Public License v3.0
+    License URI: http://www.gnu.org/licenses/gpl-3.0.html
+</code></pre>
+
+<p>We load the plugin once all the plugins are loaded and proceed to  check whether Woocommerce is installed as we will be hooking into a number of its Actions and Filters. </p>
+
+<pre><code>   add_action('plugins_loaded', 'woocommerce_pesapal_standard_init', 0);
+</code></pre>
+
+<p>We initialize the plugin class</p>
+
+<p>function woocommerce_pesapal_standard_init() {</p>
+
+<p>The actual check if Woocommerce is installed and loaded</p>
+
+<pre><code>if ( !class_exists( 'WC_Payment_Gateway' ) ) return;
+</code></pre>
+
+<p>The Pesapal API requires constructing URLs with OAuth so as to be able to make the needed GET calls 
+This file is an OAuth library provided by Pesapal themselves on their website</p>
+
+<pre><code>require_once'includes/OAuth.php';
+/**
+ * Gateway class
+ */
+</code></pre>
+
+<p>Here's where the magic begins :)</p>
+
+<pre><code>class WC_Pesapal_Standard extends WC_Payment_Gateway {
+</code></pre>
+
+<p>The constructor is a required function according to the Woocommerce docs. Here we set the default basic requried values of the gateway. Please note debug mode is not yet active therefore logging is NOT implemeted for now. However I plan to remedy this soon in a future release.</p>
+
+<pre><code>       public function __construct(){
+      $this-&gt;id           = 'pesapal_standard';
+      $this-&gt;method_title = __('Pesapal', 'woocommerce');
+      $this-&gt;has_fields   = false;
+      $this-&gt;testmode     = ($this-&gt;get_option('testmode') === 'yes') ? true : false;
+      $this-&gt;debug        = $this-&gt;get_option( 'debug' );
+      $this-&gt;log = new WC_Logger();      
+</code></pre>
+
+<p>Pesapal provide a demo gateway where developers can test out their implementations and see how it all hold-out.</p>
+
+<pre><code>    if($this-&gt;testmode){
+        $api                    = 'http://demo.pesapal.com/';
+        $this-&gt;consumer_key     = $this-&gt;get_option('testconsumerkey');
+        $this-&gt;consumer_secret  = $this-&gt;get_option('testsecretkey');
+      }
+      else{
+        $api                    = 'https://www.pesapal.com/';
+        $this-&gt;consumer_key     = $this-&gt;get_option('consumerkey');
+        $this-&gt;consumer_secret  = $this-&gt;get_option('secretkey');
+      }
+
+      $this-&gt;consumer                         = new OAuthConsumer($this-&gt;consumer_key, $this-&gt;consumer_secret);
+      $this-&gt;signature_method                 = new OAuthSignatureMethod_HMAC_SHA1();
+      $this-&gt;token = $this-&gt;params            = NULL;
+
+      // Gateway payment URLs
+      $this-&gt;post_order                       = $api.'api/PostPesapalDirectOrderV4';
+      $this-&gt;query_status         = $api.'API/QueryPaymentStatus';
+  $this-&gt;query_status_by_order_id  = $api.'API/QueryPaymentStatusByMerchantRef';
+  $this-&gt;querypaymentdetails          = $api.'API/querypaymentdetails';
+
+      // IPN Request URL
+      $this-&gt;notify_url   = str_replace( 'https:', 'http:', add_query_arg( 'wc-api', 'WC_Pesapal_Gateway', home_url( '/' ) ) );
+
+      $this-&gt;init_form_fields();
+      $this-&gt;init_settings();
+</code></pre>
+
+<p>Here we provide some settings that will be available to Users via Woocommerce &gt; Settings &gt; Checkout &gt; Pesapal</p>
+
+<pre><code>      // Settings
+      $this-&gt;title = $this-&gt;get_option('title');
+      $this-&gt;description = $this-&gt;get_option('description');
+      $this-&gt;testmode = $this-&gt;get_option( 'testmode' );
+      $this-&gt;debug = $this-&gt;get_option( 'debug' );
+      $this-&gt;consumerkey = $this-&gt;get_option('consumerkey');
+      $this-&gt;secretkey = $this-&gt;get_option('secretkey');
+      $this-&gt;testsecretkey = $this-&gt;get_option('testsecretkey');
+      $this-&gt;testconsumerkey = $this-&gt;get_option('testconsumerkey');
+</code></pre>
+
+<p>The first action is required to load the plugin and is straight out of the Woocommerce docs.
+The second provides the hook for us to display the Pesapal payment iframe during checkout.
+The third provides a callback for handling the IPN notificaiton response.
+The fourth simply handles the redirect from the Pesapal site after posting of the details.</p>
+
+<pre><code>      // Actions
+      add_action( 'woocommerce_update_options_payment_gateways_' . $this-&gt;id, array( $this, 'process_admin_options' ) );
+      add_action('woocommerce_receipt_pesapal', array( $this, 'receipt_page'));
+      add_action( 'woocommerce_api_wc_pesapal_gateway', array( $this, 'check_ipn_response' ) );
+      add_action('woocommerce_thankyou_pesapal', array( $this, 'pesapal_return_handler'));
+
+    }//close constructor
+</code></pre>
+
+<p>Here we generate the HTML required for the admin section of the Pesapal Gateway.</p>
+
+<pre><code>   function init_form_fields() {
+      $this-&gt;form_fields = array(
+        'enabled' =&gt; array(
+          'title' =&gt; __( 'Enable/Disable', 'woothemes' ),
+          'type' =&gt; 'checkbox',
+          'label' =&gt; __( 'Enable the Pesapal Gateway', 'woothemes' ),
+          'default' =&gt; 'no'
+        ),
+        'title' =&gt; array(
+          'title' =&gt; __( 'Title', 'woothemes' ),
+          'type' =&gt; 'text',
+          'description' =&gt; __( 'This controls the title which the user sees during checkout.', 'woothemes' ),
+          'default' =&gt; __( 'Pesapal Payment', 'woothemes' )
+        ),
+        'description' =&gt; array(
+          'title' =&gt; __( 'Description', 'woocommerce' ),
+          'type' =&gt; 'textarea',
+          'description' =&gt; __( 'This is the description which the user sees during checkout.', 'woocommerce' ),
+          'default' =&gt; __("Pay via Pesapal, using either mobile money, visa/mastercard, bank transfer or your pesapal e-wallet.", 'woocommerce')
+        ),
+        'consumerkey' =&gt; array(
+          'title' =&gt; __( 'Pesapal Consumer Key', 'woothemes' ),
+          'type' =&gt; 'text',
+          'description' =&gt; __( 'Pesapal consumer key.', 'woothemes' ),
+          'default' =&gt; ''
+        ),
+        'secretkey' =&gt; array(
+          'title' =&gt; __( 'Pesapal Secret Key', 'woothemes' ),
+          'type' =&gt; 'text',
+          'description' =&gt; __( 'Pesapal secret key.', 'woothemes' ),
+          'default' =&gt; ''
+        ),
+        'testmode' =&gt; array(
+          'title' =&gt; __( 'Use Demo Gateway', 'woothemes' ),
+          'type' =&gt; 'checkbox',
+          'label' =&gt; __( 'Use Demo Gateway', 'woothemes' ),
+          'description' =&gt; __( 'Test the Pesapal Gateway.', 'woothemes' ),
+          'default' =&gt; 'no'
+        ),
+        'testconsumerkey' =&gt; array(
+          'title' =&gt; __( 'Pesapal Demo Consumer Key', 'woothemes' ),
+          'type' =&gt; 'text',
+          'description' =&gt; __( 'Your test Pesapal consumer key, get one at demo.pesapal.com .', 'woothemes' ),
+          'default' =&gt; ''
+        ),
+          'testsecretkey' =&gt; array(
+          'title' =&gt; __( 'Pesapal Demo Secret Key', 'woothemes' ),
+          'type' =&gt; 'text',
+          'description' =&gt; __( 'Your test Pesapal secret key, get one at demo.pesapal.com .', 'woothemes' ),
+          'default' =&gt; ''
+        ),
+        'debug' =&gt; array(
+        'title' =&gt; __( 'Debug Log', 'woocommerce' ),
+        'type' =&gt; 'checkbox',
+        'label' =&gt; __( 'Enable logging', 'woocommerce' ),
+        'default' =&gt; 'no',
+        'description' =&gt; sprintf( __( 'Enable logging : &lt;code&gt;woocommerce/logs/pesapal-%s.txt&lt;/code&gt;', 'woocommerce' ), sanitize_file_name( wp_hash( 'pesapal' ) ) ),
+        ),
+      );
+    }//close init_form_fields
+</code></pre>
+
+<p>We then use the admin_options function to put it all together and actually display the HTML </p>
+
+<pre><code>   public function admin_options() { ?&gt;
+
+      &lt;h3&gt;&lt;?php _e('Pesapal', 'woocommerce'); ?&gt;&lt;/h3&gt;
+      &lt;p&gt;&lt;?php _e('Pesapal works with mobile payment options as well as visa/mastercard and bank transfer.', 'woocommerce');?&gt;
+      &lt;?php _e('&lt;strong&gt;Developer: &lt;/strong&gt;Jonathan&lt;br /&gt;', 'woocommerce'); ?&gt;
+      &lt;/p&gt;
+      &lt;table class="form-table"&gt;
+      &lt;?php
+        // Generate the HTML For the settings form.
+        $this-&gt;generate_settings_html();
+      ?&gt;
+      &lt;/table&gt;
+      &lt;script type="text/javascript"&gt;
+      jQuery(function(){
+        var testMode = jQuery("#woocommerce_pesapal_testmode");
+        var consumer = jQuery("#woocommerce_pesapal_testconsumerkey");
+        var secret = jQuery("#woocommerce_pesapal_testsecretkey");
+
+        if (testMode.is(":not(:checked)")){
+          consumer.parents("tr").css("display","none");
+          secrect.parents("tr").css("display","none");
+        }
+
+
+        // Add onclick handler
+        testMode.click(function(){            
+          // If checked
+          if (testMode.is(":checked")) {
+            //show the hidden div
+            consumer.parents("tr").show("fast");
+            secrect.parents("tr").show("fast");
+          } else {
+            //otherwise, hide it
+            consumer.parents("tr").hide("fast");
+            secrect.parents("tr").hide("fast");
+          }
+        });
+
+      });
+      &lt;/script&gt;
+
+      &lt;?php
+    } // close admin_options
+</code></pre>
+
+<p>We generate the HTML for the iframe our users will see once our 'receipt_page' hook is called.</p>
+
+<pre><code>function generate_pesapal_iframe($order_id){
+
+    $url = $this-&gt;create_url($order_id);
+
+    return '&lt;iframe src="'.$url.'" width="100%" height="700px"  scrolling="auto" frameBorder="0"&gt;
+            &lt;p&gt;Unable to load payment page.&lt;/p&gt;
+          &lt;/iframe&gt;';
+}
+</code></pre>
+
+<p>Generates the OAuth url</p>
+
+<p>public function create_url($order_id){
+          $order            = &amp;new WC_Order( $order_id );
+          $order_xml        = $this-&gt;pesapal_xml($order_id);
+          $callback_url     = $this-&gt;get_return_url( $order );</p>
+
+<pre><code>      $url = OAuthRequest::from_consumer_and_token($this-&gt;consumer, $this-&gt;token, "GET", $this-&gt;post_order, $this-&gt;params);
+      $url-&gt;set_parameter("oauth_callback", $callback_url);
+      $url-&gt;set_parameter("pesapal_request_data", $order_xml);
+      $url-&gt;sign_request($this-&gt;signature_method, $this-&gt;consumer, $this-&gt;token);
+
+
+      return $url;
+    }
+</code></pre>
+
+<p>Generates XML in the format required for by the Pesapal APi</p>
+
+<pre><code>     public function pesapal_xml($order_id) {
+
+      $order                      = new WC_Order( $order_id );
+      $pesapal_args['total']      = $order-&gt;get_total();
+      $pesapal_args['reference']  = $order_id;
+      $pesapal_args['first_name'] = $order-&gt;billing_first_name;
+      $pesapal_args['last_name']  = $order-&gt;billing_last_name;
+      $pesapal_args['email']      = $order-&gt;billing_email;
+      $pesapal_args['phone']      = $order-&gt;billing_phone;
+
+      $i = 0;
+      foreach($order-&gt;get_items() as $item){
+        $product = $order-&gt;get_product_from_item($item);
+
+        $cart[$i] = array(
+          'id' =&gt; ($product-&gt;get_sku() ? $product-&gt;get_sku() : $product-&gt;id),
+          'particulars' =&gt; $cart_row['name'],
+          'quantity' =&gt; $item['qty'],
+          'unitcost' =&gt; $product-&gt;regular_price,
+          'subtotal' =&gt; $order-&gt;get_item_total($item, true)
+        );
+        $i++;
+      }
+
+      $xml = "&lt;?xml version=\"1.0\" encoding=\"utf-8\"?&gt;
+        &lt;PesapalDirectOrderInfo xmlns:xsi=\"http://www.w3.org/2001/XMLSchema-instance\" xmlns:xsd=\"http://www.w3.org/2001/XMLSchema\"
+        Amount=\"" . $pesapal_args['total'] . "\"
+        Description=\"Order from " . bloginfo('name') . ".\"
+        Type=\"MERCHANT\"
+        Reference=\"" . $pesapal_args['reference'] . "\"
+        FirstName=\"" . $pesapal_args['first_name'] . "\"
+        LastName=\"" . $pesapal_args['last_name'] . "\"
+        Email=\"" . $pesapal_args['email'] . "\"
+        PhoneNumber=\"" . $pesapal_args['phone'] . "\"
+        Currency=\"" . get_woocommerce_currency() . "\"
+        xmlns=\"http://www.pesapal.com\" /&gt;
+        &lt;lineitems&gt;";
+      foreach($cart as $item){
+        $xml .= "&lt;lineitem
+              uniqueid=\"".$item['id']."\"
+              particulars=\"".$item['particulars']."\"
+              quantity=\"".$item['quantity']."\"
+              unitcost=\"".$item['unitcost']."\"
+              subtotal=\"".$item['subtotal']."\"&gt;&lt;/lineitem&gt;";
+      }
+      $xml .= "&lt;/lineitems&gt;&lt;/pesapaldirectorderinfo&gt;";
+
+      return htmlentities($xml);
+    }
+</code></pre>
+
+<p>The actual receipt_page action handler 
+Displays the iframe</p>
+
+<pre><code>public function receipt_page($order_id){
+
+    echo $this-&gt;generate_pesapal_iframe($order_id);
+
+}
+</code></pre>
+
+<p>The actual handler for the return_handler action hook</p>
+
+<pre><code>public function pesapal_return_handler(){
+
+    $params = stripslashes_deep($_GET);
+
+    $reference =  $pesapal_tracking_id = NULL;
+
+    if(isset($params['pesapal_merchant_reference']))
+    $reference = $params['pesapal_merchant_reference'];
+
+    if(isset($params['pesapal_transaction_tracking_id']))
+    $pesapal_tracking_id = $params['pesapal_transaction_tracking_id'];
+
+}
+</code></pre>
+
+<p>The actual handler for the IPN notification response. It parses the response and determines if the order has been completed, has failed, is still pending or whether the request was invalid.</p>
+
+<pre><code>public function check_ipn_response(){
+
+    global $woocommerce;
+
+    $params = stripslashes_deep($_GET);
+
+    $reference =  $pesapal_tracking_id = NULL;
+
+    if(isset($params['pesapal_notification_type']))
+    $reference = $params['pesapal_notification_type'];
+
+    if(isset($params['pesapal_merchant_reference']))
+    $reference = $params['pesapal_merchant_reference'];
+
+    if(isset($params['pesapal_transaction_tracking_id']))
+    $pesapal_tracking_id = $params['pesapal_transaction_tracking_id'];
+
+    $order = new WC_Order( $reference );
+
+    $request_status = OAuthRequest::from_consumer_and_token(
+    $this-&gt;consumer, 
+    $this-&gt;token, 
+    "GET", 
+    $this-&gt;query_status, 
+    $this-&gt;params
+    );
+
+    $request_status-&gt;set_parameter("pesapal_merchant_reference", $reference);
+    $request_status-&gt;set_parameter("pesapal_transaction_tracking_id",$pesapal_tracking_id);
+    $request_status-&gt;sign_request($this-&gt;signature_method, $this-&gt;consumer, $this-&gt;token);
+
+    $args = array (
+    'sslverify'     =&gt; false,
+    'timeout'   =&gt; 60,
+    'httpversion'   =&gt; '1.1',
+    'compress'      =&gt; false,
+    'decompress'    =&gt; false,
+    'user-agent'    =&gt; 'WooCommerce/' . WC()-&gt;version
+            );
+
+
+    $response = wp_remote_get( $request_status, $args );
+
+    if ( ! is_wp_error( $response ) &amp;&amp; $response['response']['code'] &gt;= 200 &amp;&amp; $response['response']['code'] &lt; 300 ) {
+
+    $this-&gt;log-&gt;add( 'pesapal', $response );
+
+    $header_size  = curl_getinfo($response['response']['body'], CURLINFO_HEADER_SIZE);
+            $raw_header   = substr($response['response']['body'], 0, $header_size - 4);
+            $headerArray  = explode("\r\n\r\n", $raw_header);
+            $header       = $headerArray[count($headerArray) - 1];
+
+            //transaction status
+            $elements = preg_split("/=/",substr($response['response']['body'], $header_size));
+            $pesapal_status = $elements[1];
+
+    switch ($pesapal_status){
+    case "COMPLETED":
+    $order-&gt;payment_complete();
+    $order-&gt;reduce_order_stock();
+    $woocommerce-&gt;cart-&gt;empty_cart();
+    break;
+    case "FAILED":
+    case "INVALID":
+    $order-&gt;update_status( 'failed', sprintf( __( 'Payment %s via IPN.', 'woocommerce' ), strtolower( $pesapal_status ) ) );
+    break;
+    case "PENDING":
+    $order-&gt;update_status( 'on-hold', sprintf( __( 'Payment pending: %s', 'woocommerce' ), 'Waiting for PesaPal confirmation' ) );
+    break;
+    default:
+    //No action
+    break;
+    }
+
+}
+</code></pre>
+
+<p>}//close check_ipn_response</p>
+
+<p>A required function - woocommerce docs</p>
+
+<pre><code>public function process_payment($order_id){
+
+    $order = new WC_Order( $order_id );
+
+    return array(
+    'result'    =&gt; 'success',
+    'redirect'  =&gt; $order-&gt;get_checkout_payment_url( true )
+    );
+
+}
+
+
+
+
+
+
+
+}
+
+/**
+* Add the Gateway to WooCommerce
+**/
+</code></pre>
+
+<p>We add the Payment Gateway class to the array of other gateways available to woocommerce with a filter</p>
+
+<pre><code>function woocommerce_add_pesapal_standard_gateway($methods) {
+    $methods[] = 'WC_Pesapal_Standard';
+    return $methods;
+}
+
+add_filter('woocommerce_payment_gateways', 'woocommerce_add_pesapal_standard_gateway' );
+</code></pre>
+
+<p>} `</p>
+        </section>
+
+        <aside id="sidebar">
+          <a href="https://github.com/jonathan-kosgei/woocommerce-pesapal-standard-gateway/zipball/master" class="button">
+            <small>Download</small>
+            .zip file
+          </a>
+          <a href="https://github.com/jonathan-kosgei/woocommerce-pesapal-standard-gateway/tarball/master" class="button">
+            <small>Download</small>
+            .tar.gz file
+          </a>
+
+          <p class="repo-owner"><a href="https://github.com/jonathan-kosgei/woocommerce-pesapal-standard-gateway"></a> is maintained by <a href="https://github.com/jonathan-kosgei">jonathan-kosgei</a>.</p>
+
+          <p>This page was generated by <a href="https://pages.github.com">GitHub Pages</a> using the Architect theme by <a href="https://twitter.com/jasonlong">Jason Long</a>.</p>
+        </aside>
+      </div>
+    </div>
+
+  
+  </body>
+</html>
