@@ -1,11 +1,11 @@
 <?php
 /*
 Plugin Name: WooCommerce Pesapal Standard Gateway
-Plugin URI: http://stormtech.my.phpcloud.com
+Plugin URI:  https://jonathan-kosgei.github.io/woocommerce-pesapal-standard-gateway/
 Description: Extends WooCommerce with a Pesapal gateway.
 Version: 1.0
 Author: Jonathan Kosgei
-Author URI: http://stormtech.my.phpcloud.com
+Author URI: https://github.com/jonathan-kosgei
  
 	Copyright: © 2009-2011 Jonathan Kosgei.
 	License: GNU General Public License v3.0
@@ -31,7 +31,8 @@ function woocommerce_pesapal_standard_init() {
           $this->testmode     = ($this->get_option('testmode') === 'yes') ? true : false;
           $this->debug	      = $this->get_option( 'debug' );
           $this->log = new WC_Logger();      
-          
+          $this->notify_url   = str_replace( 'https:', 'http:', add_query_arg( 'wc-api', 'WC_Pesapal_Standard_Gateway', home_url( '/' ) ) );
+
           if($this->testmode){
             $api                    = 'http://demo.pesapal.com/';
             $this->consumer_key     = $this->get_option('testconsumerkey');
@@ -97,6 +98,12 @@ function woocommerce_pesapal_standard_init() {
               'type' => 'textarea',
               'description' => __( 'This is the description which the user sees during checkout.', 'woocommerce' ),
               'default' => __("Pay via Pesapal, using either mobile money, visa/mastercard, bank transfer or your pesapal e-wallet.", 'woocommerce')
+            ),,
+            'ipnurl' => array(
+              'title' => __( 'Pesapal IPN URL', 'woothemes' ),
+              'type' => 'text',
+              'description' => __( 'Copy and Paste this URL in the Pesapal control panel.', 'woothemes' ),
+              'default' => $this->notify_url
             ),
             'consumerkey' => array(
               'title' => __( 'Pesapal Consumer Key', 'woothemes' ),
